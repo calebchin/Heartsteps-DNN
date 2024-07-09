@@ -154,6 +154,8 @@ def square_kernel(x, ys):
     """
     return (np.einsum('ntd,ncd->tcn', x, ys) + 1)**2
 
+
+
 def linear_kernel(x, y):
     """
     Linear kernel
@@ -200,6 +202,7 @@ def get_col_differences(Z, M, metric, kernel):
     N, T, n, d = Z_cp.shape
     Z_cp[M == 0] = np.nan
     Z_cp[M == 2] = np.nan
+    diffs = 0
     if metric == "wasserstein2":
         Z_cp = Z_cp.reshape((N, T, n))
         diffs = np.nanmean((Z_cp.swapaxes(0, 1)[:, None, :,  :] - Z_cp.swapaxes(0, 1))**2, axis = -1)
@@ -227,8 +230,72 @@ def get_col_differences(Z, M, metric, kernel):
                 sum_h += kern(x, x_p) + kern(y, y_p) - kern(x, y_p) - kern(x_p, y) # these results are T x T x N
     
         diffs =  (1 / (n * (n - 1)) * (np.nanmean(sum_h, axis = 2))) # average over users, unobserved entries are already nan
+        # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
+        print(np.sum(diffs == 0))
+        print(np.sum(diffs > 0))
+        diffs = np.clip(diffs, a_min = 0, a_max = None)
     np.fill_diagonal(diffs, np.inf)
     return diffs
+
+def get_col_differences_all_kernels(Z, M, metric, kernel):
+    """
+    Z : a N x T x n x d tensor. If metric = "wasserstein2", then d = 1
+    M : a N x T masking matrix
+    metric : distance metric between columns, either "wasserstein2" or "mmd"
+    kern : kernel function to use if metric = "mmd", None by default
+
+    Assumes Z is sorted along the last axis (for Wasserstein)
+
+    FOR EXPERIMENTS: returns the column differences for all kernel types
+
+    Returns:
+    diffs : a T x T matrix
+    """
+    Z_cp = Z.copy()
+    N, T, n, d = Z_cp.shape
+    Z_cp[M == 0] = np.nan
+    Z_cp[M == 2] = np.nan
+    if metric == "wasserstein2":
+        Z_cp = Z_cp.reshape((N, T, n))
+        diffs = np.nanmean((Z_cp.swapaxes(0, 1)[:, None, :,  :] - Z_cp.swapaxes(0, 1))**2, axis = -1)
+        # above is shape T x T x N
+        # take mean across users
+        diffs = np.nanmean(diffs, axis = -1)
+        np.fill_diagonal(diffs, np.inf)
+        return diffs
+    elif metric == "mmd":
+        # TODO: see if this can be vectorized
+        if kernel == "exponential":
+            kern = exponential_kernel
+        elif kernel == "square":
+            kern = square_kernel
+        elif kernel == "linear":
+            kern = linear_kernel
+        else:
+            # default is linear kernel for now
+            kern = linear_kernel
+        sum_exp = np.zeros([T, T, N])
+        sum_square = np.zeros([T, T, N])
+        for l, l_p in itertools.combinations(range(n), r=2):
+            if l != l_p:
+                x = Z_cp[:, :, l] # this is N x T x d
+                x_p = Z_cp[:, :,  l_p]
+                y = Z_cp[:, :, l] # this is N x T x d 
+                y_p = Z_cp[:, :, l_p]
+                sum_exp += exponential_kernel(x, x_p) + exponential_kernel(y, y_p)
+                - exponential_kernel(x, y_p) - exponential_kernel(x_p, y) # these results are T x T x N
+                sum_square += square_kernel(x, x_p) + square_kernel(y, y_p)
+                - square_kernel(x, y_p) - square_kernel(x_p, y)
+        exp_diffs =  (1 / (n * (n - 1)) * (np.nanmean(sum_exp, axis = 2)))
+        sq_diffs = (1 / (n * (n - 1)) * (np.nanmean(sum_square, axis = 2)))
+        # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
+        exp_diffs = np.clip(exp_diffs, a_min = 0, a_max = None)
+        sq_diffs = np.clip(sq_diffs, a_min = 0, a_max = None)
+        np.fill_diagonal(exp_diffs, np.inf)
+        np.fill_diagonal(sq_diffs, np.inf)
+        return exp_diffs, sq_diffs
+
+    
 
 # TODO: see if the loops can be eliminated in this case
 def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2"):
@@ -268,7 +335,6 @@ def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2"):
             j_nn_nonan = Z_cp[i, j_nn][M[i, j_nn] == 1]
             if np.sum(j_nn_nonan) > 0:
                 # Z_cp[i, j_nn] is len j_nn x n x d
-                
                 #print("Num neighbors: " + str(np.sum(j_nn)))
                 #print(j_nn_nonan.shape)
                 est = np.concatenate(j_nn_nonan, axis = 0)

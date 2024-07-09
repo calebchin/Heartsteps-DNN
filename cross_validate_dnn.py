@@ -3,7 +3,7 @@ import numpy as np
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 
 
-def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, negate_mask = False):
+def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, kernel, negate_mask = False):
     """
     Performs k-fold cross validation on row i in dataset `Z` with mask `M` using
     parameters `k` and `eta`, distributional estimation function `estimate`, 
@@ -55,22 +55,24 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, n
             # TODO: can this be vectorized?
             for val in folds_ind:
                 est_val = A_hat[val]
-                err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = "exponential")
+                err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = kernel)
                 err += err_onecell
         tot_error += err
     # return average error over k folds
+    if np.isnan(tot_error):
+        return np.inf
     return tot_error / final_k
 
-def search_eta(data_table, mask, k, row, col_dists, est_func, metric, negate_mask = False):
+def search_eta(data_table, mask, k, row, col_dists, est_func, metric, range_min, range_max, kernel = None, negate_mask = False):
     """
     Search for an optimal eta using cross validation on
     the observed data.
     """
     def obj(eta):
     #     return evaluate_eta(data_table, mask, k, eta)
-        return cross_validate_row_dnn(data_table, mask, row, k, eta, col_dists, est_func, error_metric = metric, negate_mask = negate_mask)
+        return cross_validate_row_dnn(data_table, mask, row, k, eta, col_dists, est_func, error_metric = metric, kernel = kernel, negate_mask = negate_mask)
     trials = Trials()
-    best_eta = fmin(fn=obj, verbose = True, space=hp.uniform('eta', -0.3, 0.3), algo=tpe.suggest, max_evals=200, trials = trials)
+    best_eta = fmin(fn=obj, verbose = True, space=hp.uniform('eta', range_min, range_max), algo=tpe.suggest, max_evals=200, trials = trials)
     return best_eta['eta'], trials
 
 # TODO: make sure these are general to any dataset, not just HS
@@ -161,7 +163,6 @@ def test_mmd_hs_whole(M_hs, A_hs, testset_size, k, row, kernel):
     # sample split
     dist_train_A = train_A.copy()
     dist_train_A[row] = 0
-    # TODO: Unify this!
     col_dists = dnn.get_col_differences(train_M, dist_train_A, metric = "mmd", kernel = kernel)
     eta_star, trials = search_eta(train_M, train_A, k, row, col_dists, dnn.estimate_row, "mmd")
 
