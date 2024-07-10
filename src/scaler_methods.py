@@ -1,10 +1,10 @@
 # include implementations for SoftImpute, USVT, LI 2019NN
 
 # for softimpute, use fancyimpute package
-
-from fancyimpute import SoftImpute, BiScaler
+from fancyimpute import SoftImpute
 import numpy as np
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+import math
 
 # test mse for all methods
 def mse(A_hat, A):
@@ -30,11 +30,10 @@ def softimpute_inds(A, test_inds):
   A_cp = A.copy()
   A_cp[test_inds] = np.nan
 
-  A_normed = BiScaler().fit_transform(A_cp)
-  A_hat = SoftImpute().fit_transform(A_normed)
-  ests = A_hat[test_inds]
-  ground_truth = A[test_inds]
-  return mse(ests, ground_truth)
+  #A_normed = BiScaler().fit_transform(A_cp)
+  A_hat = SoftImpute().fit_transform(A)
+
+  return A_hat
 
 def softimpute_end_testset(Z, M, i, testset_size):
     """
@@ -54,6 +53,35 @@ def softimpute_end_testset(Z, M, i, testset_size):
 
 # usvt
 
+# r code
+def usvt(A, eta = 0):
+   """
+   Compute the USVT matrix imputations
+
+   Parameters:
+   ----------
+   A : a N x T matrix with missing values denoted as 0
+   eta : a small positive (or 0) that affects the singular value threshold.
+         by default 0 
+
+   Returns:
+   ----------
+   A_hat : the USVT estimate of A
+   """
+   # should normalize? USVT works for entries between -1 and 1
+   N, T = A.shape
+   # currently follow Chatterjee 2015 threshold value
+   threshold = (2 + eta) * np.sqrt(T * (np.count_nonzero(~np.isnan(A)) / (N * T)))
+   # lots of existing zeros in the matrix, could cause problems?
+   A_zeros = np.where(np.isnan(A), 0, A)
+   u, s, vt = np.linalg.svd(A_zeros, full_matrices = False)
+   s_th = np.where(s >= threshold, s, 0)
+
+   recon = u @ (np.diag(s_th)) @ vt
+
+   return recon
+
+   
 
 
 # Li 2019 (S-NN)
@@ -174,7 +202,7 @@ def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
     # return average error over k folds
     return tot_error / final_k
 
-def search_eta(data_table, mask, k, row, col_dists, negate_mask = False):
+def search_eta(data_table, mask, k, row, col_dists, range_min, range_max, negate_mask = False):
     """
     Search for an optimal eta using cross validation on
     the observed data.
@@ -183,7 +211,7 @@ def search_eta(data_table, mask, k, row, col_dists, negate_mask = False):
     #     return evaluate_eta(data_table, mask, k, eta)
         return cross_validate_row_snn(data_table, mask, row, k, eta, col_dists, negate_mask = negate_mask)
     trials = Trials()
-    best_eta = fmin(fn=obj, verbose = True, space=hp.uniform('eta', -0.3, 0.3), algo=tpe.suggest, max_evals=200, trials = trials)
+    best_eta = fmin(fn=obj, verbose = True, space=hp.uniform('eta', range_min, range_max), algo=tpe.suggest, max_evals=200, trials = trials)
     return best_eta['eta'], trials
 
 def test_snn_whole(Z, Msk, testset_size, k, ax, row):
@@ -273,3 +301,4 @@ def test_snn_end(Z, Msk, testset_size, k, ax, row):
     error = mse(est_test_inds, ground_truth)
     print("Avg MSE: " + str(error))
     return error, trials
+
