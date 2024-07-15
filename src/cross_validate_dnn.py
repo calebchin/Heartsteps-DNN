@@ -19,8 +19,10 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
     # shuffle the x coordinates
     np.random.seed(seed = 42)
     np.random.shuffle(obvs_inds_x)
-    
+    #k = len(obvs_inds_x)
     # split coordinates into k-folds
+    if len(obvs_inds_x) < 1:
+        return np.inf
     folds = np.array_split(obvs_inds_x, k, axis = 0)
     tot_error = 0
     final_k = k
@@ -53,10 +55,12 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
         elif error_metric == 'mmd':
             # in this case A_hat is a (potentially) ragged list
             # TODO: can this be vectorized?
-            for val in folds_ind:
-                est_val = A_hat[val]
-                err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = kernel)
-                err += err_onecell
+            err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel)
+            # for val in folds_ind:
+            #     est_val = A_hat[val]
+            #     err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = kernel)
+            #     err += err_onecell
+            # err = err / len(folds_ind)
         tot_error += err
     # return average error over k folds
     if np.isnan(tot_error):

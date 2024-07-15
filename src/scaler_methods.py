@@ -13,25 +13,21 @@ def mse(A_hat, A):
     """
     return np.nanmean((A_hat - A)**2)
 
-def softimpute_inds(A, test_inds):
+def softimpute(A):
   """
-  Uses SoftImpute to impute the nan values in A (masked by M).
+  Uses SoftImpute to impute the nan values in A.
 
   Parameters:
   -----------
   A : a N x T matrix
-  M : a N x T masking matrix for A
-  test_inds : the indices of A that we are interested in testing
 
   Returns:
   -----------
-  mse : the mse of imputations made by softimpute versus the true value
+  A_hat : matrix A with nan values imputed
   """
   A_cp = A.copy()
-  A_cp[test_inds] = np.nan
-
   #A_normed = BiScaler().fit_transform(A_cp)
-  A_hat = SoftImpute().fit_transform(A)
+  A_hat = SoftImpute(verbose = False).fit_transform(A_cp)
 
   return A_hat
 
@@ -49,37 +45,118 @@ def softimpute_end_testset(Z, M, i, testset_size):
     test_inds = test_inds[test_inds >= (len(Z[i]) - test_size)]
     row_inds = np.repeat(i, len(test_inds))
     final_inds = (row_inds, test_inds)
-    return softimpute_inds(Z, final_inds)
+    return softimpute(Z, final_inds)
 
-# usvt
+
+# implementation from https://rdrr.io/cran/filling/src/R/fill_USVT.R
 
 # r code
 def usvt(A, eta = 0):
-   """
-   Compute the USVT matrix imputations
+    """
+    Compute the USVT matrix imputations
 
-   Parameters:
-   ----------
-   A : a N x T matrix with missing values denoted as 0
-   eta : a small positive (or 0) that affects the singular value threshold.
-         by default 0 
+    Parameters:
+    ----------
+    A : a N x T matrix with missing values denoted as nan
+    eta : a small positive (or 0) that affects the singular value threshold.
+            by default 0 
 
-   Returns:
-   ----------
-   A_hat : the USVT estimate of A
-   """
-   # should normalize? USVT works for entries between -1 and 1
-   N, T = A.shape
-   # currently follow Chatterjee 2015 threshold value
-   threshold = (2 + eta) * np.sqrt(T * (np.count_nonzero(~np.isnan(A)) / (N * T)))
-   # lots of existing zeros in the matrix, could cause problems?
-   A_zeros = np.where(np.isnan(A), 0, A)
-   u, s, vt = np.linalg.svd(A_zeros, full_matrices = False)
-   s_th = np.where(s >= threshold, s, 0)
+    Returns:
+    ----------
+    A_hat : the USVT estimate of A
+    """
+    # later should generalize for all matrices (i.e. transpose if m > n)
 
-   recon = u @ (np.diag(s_th)) @ vt
+    N, T = A.shape
 
-   return recon
+    # data prep
+    # of observed values, 
+    a = np.nanmin(A)
+    b = np.nanmax(A)
+
+    A_scaled = ((A - ((a + b) / 2)) / ((b-a)/2))
+
+    Y_scaled = A_scaled.copy()
+    Y_scaled = np.where(np.isnan(Y_scaled), 0, Y_scaled)
+
+    p_hat = np.sum(np.isnan(A)) / np.size(A)
+
+    # currently follow Chatterjee 2015 threshold value
+    threshold = (2 + eta) * np.sqrt(T * p_hat)
+    # lots of existing zeros in the matrix, could cause problems?
+
+    u, s, vt = np.linalg.svd(Y_scaled, full_matrices = False)
+
+    s_mask = s >= threshold
+
+    if np.sum(s_mask) == 1:
+        W = np.outer(u[:, s_mask], vt[s_mask, :]) * s[s_mask] / p_hat
+    else:
+        W = (u[:, s_mask] @ np.diag(s[s_mask]) @ vt[s_mask, :]) / p_hat
+
+    # cap to [-1, 1]
+    W[W>1]  = 1.0
+    W[W<-1] = -1.0
+
+    # rescale:
+
+    res = ((W*((b-a)/2)) + (a+b)/2)
+
+    return res
+
+def test_estimate_usvt(Z, mask):
+    """
+    Given a partially observed matrix Z masked by mask, estimate all observed values
+    using USVT
+
+    Parameters:
+    -----------
+    Z : N x T
+    mask : N x T
+
+    Returns: 
+    -----------
+    A_hat : N x T matrix with test set "missing" values imputed
+    """
+    rows, cols = np.nonzero(mask == 1)
+    N, T = Z.shape
+    A_hat = np.full([N, T], np.nan)
+    for l in range(len(rows)):
+       print("Imputation #" + str(l) + " out of " + str(len(rows)))
+       i = rows[l]
+       j = cols[l]
+       Z_cp = Z.copy()
+       Z_cp[i, j] = np.nan
+       est_mat = usvt(Z_cp, eta = 0.01)
+       A_hat[i, j] = est_mat[i, j]
+    return A_hat
+
+def test_estimate_softimpute(Z, mask):
+    """
+    Given a partially observed matrix Z masked by mask, estimate all observed values
+    using SoftImpute
+
+    Parameters:
+    -----------
+    Z : N x T
+    mask : N x T
+
+    Returns: 
+    -----------
+    A_hat : N x T matrix with test set "missing" values imputed
+    """
+    rows, cols = np.nonzero(mask == 1)
+    N, T = Z.shape
+    A_hat = np.full([N, T], np.nan)
+    for l in range(len(rows)):
+       print("Imputation #" + str(l) + " out of " + str(len(rows)))
+       i = rows[l]
+       j = cols[l]
+       Z_cp = Z.copy()
+       Z_cp[i, j] = np.nan
+       est_mat = softimpute(Z_cp)
+       A_hat[i, j] = est_mat[i, j]
+    return A_hat
 
    
 

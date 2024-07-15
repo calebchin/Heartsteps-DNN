@@ -57,12 +57,60 @@ def sqmmd_est2(dat1, dat2, kernel) :
         kXX = np.exp( -0.5*( dXX_mm + np.transpose(dXX_mm) - 2*XX ) ) 
         kYY = np.exp( -0.5*( dYY_nn + np.transpose(dYY_nn) - 2*YY ) )
         kXY = np.exp( -0.5*( dXX_mn + dYY_mn - 2*XY ) )
+
         
-    val = (kXX.sum() - np.diag(kXX).sum())/(m*(m - 1)) + (kYY.sum() - np.diag(kYY).sum())/(n*(n - 1)) - 2*kXY.sum()/(n*m)
+    val = (np.sum(kXX) - np.sum(np.diag(kXX)))/(m*(m - 1)) + (np.sum(kYY) - np.sum(np.diag(kYY)))/(n*(n - 1)) - 2*np.sum(kXY)/(n*m)
     if val < 0 : 
         val = 0
 
-    return(val)
+    return (val)
+
+def sqmmd_est2_col(dat1, dat2, kernel) :
+    """
+    Computes U-statistics estimate of squared MMD_k, when number of samples from each distribution are different
+
+    Input
+        dat 1 : N x m x d data matrix coming from first d dim distribution
+        dat 2 : N x n x d data matrix coming from second d dim distribution
+        kernel : k(x, y) that defines MMD_k^2
+    
+    Output
+        MMD_k^2 estimator between datasets with N entries (N = 1 is a single cell)
+
+    Author: Kyuseong Choi and Caleb Chin
+    """
+    #print(dat1.shape)
+    #print(dat2.shape)
+    N, m, d1 = dat1.shape
+    N, n, d2 = dat2.shape
+
+    if d1 != d2 : 
+        print("Data dimension do not match!")
+        return
+
+    XX = np.matmul(dat1, np.transpose(dat1, axes = (0, 2, 1))) # m by m matrix with x_i^Tx_j
+    YY = np.matmul(dat2, np.transpose(dat2, axes = (0, 2, 1))) # n by n matrix with y_i^Ty_j
+    XY = np.matmul(dat1, np.transpose(dat2, axes = (0, 2, 1))) # m by n matrix with x_i^Ty_j  
+
+    if kernel == "linear" :
+        kXX, kYY, kXY = XX, YY, XY
+    if kernel == "square" :
+        kXX, kYY, kXY = (XX + np.ones( (m, m) ))**2, (YY + np.ones( (n, n) ))**2, (XY + np.ones( (m, n) ))**2
+    if kernel == "exponential" :
+        dXX_mm = np.broadcast_to(np.diagonal(XX.T)[:, None], (N, m, m))
+        dYY_nn = np.broadcast_to(np.diagonal(YY.T)[:, None], (N, n, n))
+        dXX_mn = np.broadcast_to(np.diagonal(XX.T)[:, :, None], (N, m, n))
+        dYY_mn = np.broadcast_to(np.diagonal(YY.T)[:, None], (N, m, n))
+        kXX = np.exp( -0.5*( dXX_mm + np.transpose(dXX_mm, axes = (0, 2, 1)) - 2*XX ) ) 
+        kYY = np.exp( -0.5*( dYY_nn + np.transpose(dYY_nn, axes = (0, 2, 1)) - 2*YY ) )
+        kXY = np.exp( -0.5*( dXX_mn + dYY_mn - 2*XY ) )
+        
+    val_all = (np.sum(kXX, axis = (1, 2)) - np.sum(np.diagonal(kXX.T), axis = 1))/(m*(m - 1)) + (np.sum(kYY, axis = (1, 2)) - np.sum(np.diagonal(kYY.T), axis = 1))/(n*(n - 1)) - 2*np.sum(kXY, axis = (1, 2))/(n*m)
+    val = np.nanmean(val_all)
+    if val < 0 : 
+        val = 0
+
+    return (val)
 
 def avg_mmd_distance(A_hat : list, A : np.array, inds, kernel : string):
     """
@@ -135,7 +183,7 @@ def exponential_kernel(x, y):
     exp : T x T x N matrix where exp_ij = the exp kernel computation between column i
     and column j
     """
-    exp = np.exp(-0.5 * np.linalg.norm(x.swapaxes(0, 1)[:, None, :] - y.swapaxes(0, 1), axis = 3))
+    exp = np.exp(-0.5 * (np.linalg.norm(x.swapaxes(0, 1)[:, None, :] - y.swapaxes(0, 1), axis = 3))**2)
     return exp
 
 def square_kernel(x, ys):
@@ -210,30 +258,37 @@ def get_col_differences(Z, M, metric, kernel):
         # take mean across users
         diffs = np.nanmean(diffs, axis = -1)
     elif metric == "mmd":
-        # TODO: see if this can be vectorized
-        if kernel == "exponential":
-            kern = exponential_kernel
-        elif kernel == "square":
-            kern = square_kernel
-        elif kernel == "linear":
-            kern = linear_kernel
-        else:
-            # default is linear kernel for now
-            kern = linear_kernel
-        sum_h = np.zeros([T, T, N])
-        for l, l_p in itertools.combinations(range(n), r=2):
-            if l != l_p:
-                x = Z_cp[:, :, l] # this is N x T x d
-                x_p = Z_cp[:, :,  l_p]
-                y = Z_cp[:, :, l] # this is N x T x d 
-                y_p = Z_cp[:, :, l_p]
-                sum_h += kern(x, x_p) + kern(y, y_p) - kern(x, y_p) - kern(x_p, y) # these results are T x T x N
-    
-        diffs =  (1 / (n * (n - 1)) * (np.nanmean(sum_h, axis = 2))) # average over users, unobserved entries are already nan
+        # # TODO: see if this can be vectorized
+        # if kernel == "exponential":
+        #     kern = exponential_kernel
+        # elif kernel == "square":
+        #     kern = square_kernel
+        # elif kernel == "linear":
+        #     kern = linear_kernel
+        # else:
+        #     # default is linear kernel for now
+        #     kern = linear_kernel
+        # sum_h = np.zeros([T, T, N])
+        # for l, l_p in itertools.combinations(range(n), r=2):
+        #     if l != l_p:
+        #         x = Z_cp[:, :, l] # this is N x T x d
+        #         x_p = Z_cp[:, :,  l_p]
+        #         y = Z_cp[:, :, l] # this is N x T x d 
+        #         y_p = Z_cp[:, :, l_p]
+        #         sum_h += kern(x, x_p) + kern(y, y_p) - kern(x, y_p) - kern(x_p, y) # these results are T x T x N
+        diffs = np.full([T, T], 0.0)
+        for i in range(T - 1):
+            for j in range(i + 1, T):
+                if i != j:
+                    col_diffs = sqmmd_est2_col(Z_cp[:, i], Z_cp[:, j], kernel)
+                    diffs[i, j] = col_diffs
+        # diffs =  (1 / (n * (n - 1)) * (np.nanmean(sum_h, axis = 2))) # average over users, unobserved entries are already nan
         # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
-        print(np.sum(diffs == 0))
-        print(np.sum(diffs > 0))
+        # print(np.sum(diffs == 0))
+        # print(np.sum(diffs > 0))
+        diffs = diffs + diffs.T
         diffs = np.clip(diffs, a_min = 0, a_max = None)
+    print("updated")
     np.fill_diagonal(diffs, np.inf)
     return diffs
 
@@ -251,6 +306,7 @@ def get_col_differences_all_kernels(Z, M, metric, kernel):
     Returns:
     diffs : a T x T matrix
     """
+    print("getting diffs")
     Z_cp = Z.copy()
     N, T, n, d = Z_cp.shape
     Z_cp[M == 0] = np.nan
@@ -298,7 +354,7 @@ def get_col_differences_all_kernels(Z, M, metric, kernel):
     
 
 # TODO: see if the loops can be eliminated in this case
-def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2"):
+def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2", ret_nn = False):
     """
     Estimate a row i of observations using eta-radius neighborhood and col_dists
     distances between columns. The columns of interest are indexed by cols
@@ -312,6 +368,9 @@ def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2"):
     #M_cp = M.copy()
     Z_cp[M == 0] = np.nan
     Z_cp[M == 2] = np.nan
+
+    nn_count = np.full([T], np.nan)
+
     # create a table of indices to slice and average over
     neighborhoods = col_dists <= eta
     if metric == "wasserstein2":
@@ -321,27 +380,36 @@ def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2"):
             #print("neighborhood")
             #print(j_nn)
             #print(np.sum(j_nn))
-            if np.sum(j_nn) > 0:
+            neighbors = Z_cp[i, j_nn][M[i, j_nn] == 1]  
+            if np.size(neighbors) > 0:
                 #print(np.nansum(Z[i, :]))
-                est = np.nanmean(Z_cp[i, j_nn], axis = 0).flatten()
+                est = np.nanmean(neighbors, axis = 0).flatten()
+                nn_count_row = neighbors.shape[0]
             else:
                 est = np.nanmean(Z_cp[i, :], axis = 0).flatten()
+                nn_count_row = 0
             row_ests[j] = est
+            nn_count[j] = nn_count_row
     elif metric == "mmd":
         #print("in here")
         row_ests = [None] * T
         for j in cols:
             j_nn = neighborhoods[j]
             j_nn_nonan = Z_cp[i, j_nn][M[i, j_nn] == 1]
-            if np.sum(j_nn_nonan) > 0:
+            if np.size(j_nn_nonan) > 0:
                 # Z_cp[i, j_nn] is len j_nn x n x d
                 #print("Num neighbors: " + str(np.sum(j_nn)))
                 #print(j_nn_nonan.shape)
                 est = np.concatenate(j_nn_nonan, axis = 0)
+                nn_count_row = j_nn_nonan.shape[0]
             else:
                 ann_nonan =  Z_cp[i, :][M[i, :] == 1]
                 est = np.concatenate(ann_nonan, axis = 0)
+                nn_count_row = 0
             row_ests[j] = est
+            nn_count[j] = nn_count_row
     # this is np array of size T x n if wasserstein, 
     # list of length T with jagged np arrays if mmd
+    if ret_nn:
+        return row_ests, nn_count
     return row_ests
