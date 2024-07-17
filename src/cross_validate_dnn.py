@@ -3,7 +3,7 @@ import numpy as np
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 
 
-def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, kernel, negate_mask = False):
+def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, kernel, negate_mask = False, sigma = None):
     """
     Performs k-fold cross validation on row i in dataset `Z` with mask `M` using
     parameters `k` and `eta`, distributional estimation function `estimate`, 
@@ -26,6 +26,7 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
     folds = np.array_split(obvs_inds_x, k, axis = 0)
     tot_error = 0
     final_k = k
+    notnan = False
 
     for j in range(k):
         # indices of the observed outcomes in the validation set in this iteration
@@ -55,15 +56,23 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
         elif error_metric == 'mmd':
             # in this case A_hat is a (potentially) ragged list
             # TODO: can this be vectorized?
-            err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel)
+                err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel)
+                #err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel, sigma)
+
             # for val in folds_ind:
             #     est_val = A_hat[val]
             #     err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = kernel)
             #     err += err_onecell
             # err = err / len(folds_ind)
-        tot_error += err
+        if not np.isnan(err):
+            notnan = True
+            tot_error += err
+        else:
+            final_k -= 1
+    if final_k == 0:
+        return np.inf
     # return average error over k folds
-    if np.isnan(tot_error):
+    if np.isnan(tot_error) or final_k == 0 or not notnan:
         return np.inf
     return tot_error / final_k
 
@@ -73,6 +82,20 @@ def search_eta(data_table, mask, k, row, col_dists, est_func, metric, range_min,
     the observed data.
     """
     def obj(eta):
+    #     return evaluate_eta(data_table, mask, k, eta)
+        return cross_validate_row_dnn(data_table, mask, row, k, eta, col_dists, est_func, error_metric = metric, kernel = kernel)
+    trials = Trials()
+    best_eta = fmin(fn=obj, verbose = True, 
+                    space=hp.uniform('eta', range_min, range_max), 
+                    algo=tpe.suggest, max_evals=200, trials = trials)
+    return best_eta['eta'], trials
+
+def search_eta_gauss(data_table, mask, k, row, col_dists, est_func, metric, range_min, range_max, kernel = "exponential", negate_mask = False):
+    """
+    Search for an optimal eta using cross validation on
+    the observed data.
+    """
+    def obj(eta, sigma):
     #     return evaluate_eta(data_table, mask, k, eta)
         return cross_validate_row_dnn(data_table, mask, row, k, eta, col_dists, est_func, error_metric = metric, kernel = kernel, negate_mask = negate_mask)
     trials = Trials()

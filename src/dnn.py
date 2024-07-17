@@ -125,11 +125,17 @@ def avg_mmd_distance(A_hat : list, A : np.array, inds, kernel : string):
     kernel : string, the kernel that defines MMD_k^2 (e.g. exponential, square, linear)
     """
     err = 0
+    num_val = len(inds)
     for val in inds:
         est_val = A_hat[val]
         err_onecell = sqmmd_est2(est_val, A[val], kernel = kernel)
-        err += err_onecell
-    return err / len(inds)
+        if ~np.isnan(err_onecell):
+            err += err_onecell
+        else:
+            num_val -= 1
+    if num_val == 0:
+        return np.nan
+    return err / num_val
 
 def sqmmd_cols(Z, M, kernel):
     """
@@ -259,36 +265,17 @@ def get_col_differences(Z, M, metric, kernel):
         diffs = np.nanmean(diffs, axis = -1)
     elif metric == "mmd":
         # # TODO: see if this can be vectorized
-        # if kernel == "exponential":
-        #     kern = exponential_kernel
-        # elif kernel == "square":
-        #     kern = square_kernel
-        # elif kernel == "linear":
-        #     kern = linear_kernel
-        # else:
-        #     # default is linear kernel for now
-        #     kern = linear_kernel
-        # sum_h = np.zeros([T, T, N])
-        # for l, l_p in itertools.combinations(range(n), r=2):
-        #     if l != l_p:
-        #         x = Z_cp[:, :, l] # this is N x T x d
-        #         x_p = Z_cp[:, :,  l_p]
-        #         y = Z_cp[:, :, l] # this is N x T x d 
-        #         y_p = Z_cp[:, :, l_p]
-        #         sum_h += kern(x, x_p) + kern(y, y_p) - kern(x, y_p) - kern(x_p, y) # these results are T x T x N
         diffs = np.full([T, T], 0.0)
         for i in range(T - 1):
             for j in range(i + 1, T):
-                if i != j:
-                    col_diffs = sqmmd_est2_col(Z_cp[:, i], Z_cp[:, j], kernel)
-                    diffs[i, j] = col_diffs
+                col_diffs = sqmmd_est2_col(Z_cp[:, i], Z_cp[:, j], kernel)
+                diffs[i, j] = col_diffs
         # diffs =  (1 / (n * (n - 1)) * (np.nanmean(sum_h, axis = 2))) # average over users, unobserved entries are already nan
         # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
         # print(np.sum(diffs == 0))
         # print(np.sum(diffs > 0))
         diffs = diffs + diffs.T
         diffs = np.clip(diffs, a_min = 0, a_max = None)
-    print("updated")
     np.fill_diagonal(diffs, np.inf)
     return diffs
 
@@ -371,6 +358,8 @@ def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2", ret_nn 
 
     nn_count = np.full([T], np.nan)
 
+    list_neighbors = [None] * T
+
     # create a table of indices to slice and average over
     neighborhoods = col_dists <= eta
     if metric == "wasserstein2":
@@ -385,11 +374,15 @@ def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2", ret_nn 
                 #print(np.nansum(Z[i, :]))
                 est = np.nanmean(neighbors, axis = 0).flatten()
                 nn_count_row = neighbors.shape[0]
+                list_neighbors_row = np.nonzero(j_nn & (M[i, :] == 1))
             else:
-                est = np.nanmean(Z_cp[i, :], axis = 0).flatten()
+                #est = np.nanmean(Z_cp[i, :], axis = 0).flatten()
+                est = np.full([n], -np.inf)
                 nn_count_row = 0
+                list_neighbors_row = None
             row_ests[j] = est
             nn_count[j] = nn_count_row
+            list_neighbors[j] = list_neighbors_row
     elif metric == "mmd":
         #print("in here")
         row_ests = [None] * T
@@ -402,14 +395,18 @@ def estimate_row(Z, M, i, cols, col_dists, eta, metric = "wasserstein2", ret_nn 
                 #print(j_nn_nonan.shape)
                 est = np.concatenate(j_nn_nonan, axis = 0)
                 nn_count_row = j_nn_nonan.shape[0]
+                list_neighbors_row = np.nonzero(j_nn & (M[i, :] == 1))
             else:
-                ann_nonan =  Z_cp[i, :][M[i, :] == 1]
-                est = np.concatenate(ann_nonan, axis = 0)
+                #ann_nonan =  Z_cp[i, :][M[i, :] == 1]
+                #est = np.concatenate(ann_nonan, axis = 0)
+                est = np.full([n, d], -np.inf)
                 nn_count_row = 0
+                list_neighbors_row = None
             row_ests[j] = est
             nn_count[j] = nn_count_row
+            list_neighbors[j] = list_neighbors_row
     # this is np array of size T x n if wasserstein, 
     # list of length T with jagged np arrays if mmd
     if ret_nn:
-        return row_ests, nn_count
+        return row_ests, nn_count, list_neighbors
     return row_ests

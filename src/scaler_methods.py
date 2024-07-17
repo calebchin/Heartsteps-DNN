@@ -180,17 +180,18 @@ def all_dissims(O, M, ax):
     """
     # apply mask to the original matrix -> if something is not observed, then
     # should not include in the mean calcs
-    O[M != 1] = np.nan 
+    O_cp = O.copy()
+    O_cp[M != 1] = np.nan 
     if ax == 1:
-        O = O.T
+        O_cp = O_cp.T
         M = M.T
-    O_br = O[:, None] # add extra dim for broadcast operation
+    O_br = O_cp[:, None] # add extra dim for broadcast operation
     # all row dissims between pairs of rows
-    dis = (O_br - O)**2
+    dis = (O_br - O_cp)**2
     # take mean over the sample dimension (now the 2nd dim)
     mean_row_dis = np.nanmean(dis, axis = 2)
     # overlap between every
-    overlap = np.sum(M[:, None] * M, axis = 2).astype('float64')
+    overlap = np.nansum(M[:, None] * M, axis = 2).astype('float64')
     zs = np.nonzero(overlap == 0)
     overlap[zs] = np.nan
     
@@ -217,7 +218,7 @@ def estimate_row(Z, M, u, inds, dissims, eta, ax):
     -----------
     ests : length T array with nn estimates in entries specifed by inds
     """
-    Z_cp = Z.copy
+    Z_cp = Z.copy()
     N, T = Z_cp.shape
     Z_cp[M != 1] = np.nan
     if ax == 0:
@@ -231,7 +232,7 @@ def estimate_row(Z, M, u, inds, dissims, eta, ax):
         ests = np.full([T], np.nan)
         for i in inds:
           nn_inds = dissims[i] <= eta 
-          ests[i] = np.nanmean(Z[u,nn_inds] * (M[u, nn_inds] == 1), axis = 1)
+          ests[i] = np.nanmean(Z_cp[u,nn_inds][M[u, nn_inds] == 1], axis = 0)
         return ests
 
 def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
@@ -244,6 +245,7 @@ def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
     Z : N x T x n array
     M : N x T array
     """
+    Z_cp = Z.copy()
     # find observed indices of row i and create splits off of those
     obvs_inds_x = np.nonzero(M[i] == 1)[0]
     
@@ -256,11 +258,13 @@ def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
     tot_error = 0
     final_k = k
 
+    all_nan = True
+
     for j in range(k):
         # indices of the observed outcomes in the validation set in this iteration
         folds_ind = folds[j]
 
-        ground_truth = Z[i, folds_ind]
+        ground_truth = Z_cp[i, folds_ind]
         est_mask = M.copy()
         Z_folds = Z.copy()
         # hide observed values in the validation set
@@ -269,14 +273,17 @@ def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
         est_mask[i, folds_ind] = 0
         Z_folds[i, folds_ind] = np.nan
         A_hat = estimate_row(Z_folds, est_mask, i, folds_ind, col_dists, eta, ax = 1)
-    
         # compute error wrt given metric
         err = mse(A_hat[folds_ind], ground_truth)
         if np.isnan(err):
             final_k -= 1
+            #print("error nan")
         else:
           tot_error += err
+          all_nan = False
     # return average error over k folds
+    if final_k == 0 or all_nan:
+        return np.inf 
     return tot_error / final_k
 
 def search_eta(data_table, mask, k, row, col_dists, range_min, range_max, negate_mask = False):
