@@ -3,7 +3,7 @@ import numpy as np
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 
 
-def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, kernel, negate_mask = False, sigma = None):
+def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, kernel):
     """
     Performs k-fold cross validation on row i in dataset `Z` with mask `M` using
     parameters `k` and `eta`, distributional estimation function `estimate`, 
@@ -15,7 +15,6 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
     """
     # find observed indices of row i and create splits off of those
     obvs_inds_x = np.nonzero(M[i] == 1)[0]
-    
     # shuffle the x coordinates
     np.random.seed(seed = 42)
     np.random.shuffle(obvs_inds_x)
@@ -58,7 +57,6 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
             # TODO: can this be vectorized?
                 err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel)
                 #err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel, sigma)
-
             # for val in folds_ind:
             #     est_val = A_hat[val]
             #     err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = kernel)
@@ -76,7 +74,75 @@ def cross_validate_row_dnn(Z, M, i, k, eta, col_dists, estimate, error_metric, k
         return np.inf
     return tot_error / final_k
 
-def search_eta(data_table, mask, k, row, col_dists, est_func, metric, range_min, range_max, kernel = None, negate_mask = False):
+def cross_validate_row_dnn_gauss(Z, M, i, k, eta, sigma, estimate, error_metric, kernel):
+    """
+    Performs k-fold cross validation on row i in dataset `Z` with mask `M` using
+    parameters `k` and `eta`, distributional estimation function `estimate`, 
+    and error function `error_metric`. `error_metric` can either be `wasserstein2`
+    or `mmd`.
+
+    Z : N x T x n array
+    M : N x T array
+    """
+    # find observed indices of row i and create splits off of those
+    obvs_inds_x = np.nonzero(M[i] == 1)[0]
+    
+    # shuffle the x coordinates
+    np.random.seed(seed = 42)
+    np.random.shuffle(obvs_inds_x)
+    #k = len(obvs_inds_x)
+    # split coordinates into k-folds
+    if len(obvs_inds_x) < 1:
+        return np.inf
+    folds = np.array_split(obvs_inds_x, k, axis = 0)
+    tot_error = 0
+    final_k = k
+    notnan = False
+
+    for j in range(k):
+        # indices of the observed outcomes in the validation set in this iteration
+        folds_ind = folds[j]
+
+        ground_truth = Z[i, folds_ind]
+        ground_truth_row = Z[i]
+        est_mask = M.copy()
+        Z_folds = Z.copy()
+        # hide observed values in the validation set
+        # CURRENT STRATEGY: mask row for each fold indice
+        # TODO: this breaks with k = 1
+        est_mask[i, folds_ind] = 0
+        Z_folds[i, folds_ind] = np.nan
+        col_dists = dnn.get_col_differences(Z_folds, est_mask, metric = error_metric, kernel = "exponential", sigma = sigma)
+        A_hat = estimate(Z_folds, est_mask, i, folds_ind, col_dists, eta, metric = error_metric)
+    
+        # compute error wrt given metric
+        err = 0
+    
+        # in this case A_hat is a (potentially) ragged list
+        # TODO: can this be vectorized?
+        err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel, sigma)
+            #err = dnn.avg_mmd_distance(A_hat, ground_truth_row, folds_ind, kernel, sigma)
+
+        # for val in folds_ind:
+        #     est_val = A_hat[val]
+        #     err_onecell = dnn.sqmmd_est2(est_val, ground_truth_row[val], kernel = kernel)
+        #     err += err_onecell
+        # err = err / len(folds_ind)
+        if not np.isnan(err):
+            notnan = True
+            tot_error += err
+        else:
+            final_k -= 1
+    if final_k == 0:
+        return np.inf
+    # return average error over k folds
+    if np.isnan(tot_error) or final_k == 0 or not notnan:
+        return np.inf
+    return tot_error / final_k
+
+
+
+def search_eta(data_table, mask, k, row, col_dists, est_func, metric, range_min, range_max, kernel = None):
     """
     Search for an optimal eta using cross validation on
     the observed data.
@@ -90,17 +156,17 @@ def search_eta(data_table, mask, k, row, col_dists, est_func, metric, range_min,
                     algo=tpe.suggest, max_evals=200, trials = trials)
     return best_eta['eta'], trials
 
-def search_eta_gauss(data_table, mask, k, row, col_dists, est_func, metric, range_min, range_max, kernel = "exponential", negate_mask = False):
+def search_eta_gauss(data_table, mask, k, row, est_func, metric, range_min, range_max, range_min_sig, range_max_sig, kernel = "exponential"):
     """
     Search for an optimal eta using cross validation on
     the observed data.
     """
-    def obj(eta, sigma):
+    def obj(params):
     #     return evaluate_eta(data_table, mask, k, eta)
-        return cross_validate_row_dnn(data_table, mask, row, k, eta, col_dists, est_func, error_metric = metric, kernel = kernel, negate_mask = negate_mask)
+        return cross_validate_row_dnn_gauss(data_table, mask, row, k, params['eta'], params['sigma'], est_func, error_metric = metric, kernel = kernel)
     trials = Trials()
-    best_eta = fmin(fn=obj, verbose = True, space=hp.uniform('eta', range_min, range_max), algo=tpe.suggest, max_evals=200, trials = trials)
-    return best_eta['eta'], trials
+    best_params = fmin(fn=obj, verbose = True, space={'eta' : hp.uniform('eta', range_min, range_max), 'sigma' : hp.loguniform('sigma', range_min_sig, range_max_sig)}, algo=tpe.suggest, max_evals=50, trials = trials)
+    return best_params['eta'], best_params['sigma'], trials
 
 # TODO: make sure these are general to any dataset, not just HS
 # TODO: should provide test error computation for non-end positions
@@ -247,7 +313,3 @@ def test_mmd_hs_end(M_hs, A_hs, testset_size, k, row, kernel):
     mmd_error = dnn.avg_mmd_distance(estimates, ground_truth, test_inds, kernel = kernel)
     print("Avg MMD Error: " + str(mmd_error))
     return mmd_error, trials
-
-
-# TODO: find a way to find neighbors using the inverse of mask (i.e. match with
-# masked entries to find neighbors).

@@ -13,6 +13,12 @@ def mse(A_hat, A):
     """
     return np.nanmean((A_hat - A)**2)
 
+def l2_loss(A_hat, A):
+    """
+    Return the l2 loss of the estimate
+    """
+    return np.nanmean(np.linalg.norm((A_hat - A)**2, axis = -1))
+
 def softimpute(A):
   """
   Uses SoftImpute to impute the nan values in A.
@@ -168,7 +174,7 @@ def all_dissims(O, M, ax):
 
     Parameters
     ----------
-    O : a matrix of size a x b
+    O : a matrix of size a x b x d (d can be 1)
     M : a masking matrix of size a x b that
         dictates which entries of O are known
     ax : specifies which dimension of O to compute similarities over
@@ -181,24 +187,33 @@ def all_dissims(O, M, ax):
     # apply mask to the original matrix -> if something is not observed, then
     # should not include in the mean calcs
     O_cp = O.copy()
+    a, b, d = O_cp.shape
     O_cp[M != 1] = np.nan 
     if ax == 1:
-        O_cp = O_cp.T
+        O_cp = np.swapaxes(O_cp, 0, 1)
         M = M.T
     O_br = O_cp[:, None] # add extra dim for broadcast operation
     # all row dissims between pairs of rows
-    dis = (O_br - O_cp)**2
+    if d == 1:
+        dis = (O_br - O_cp)**2
+        #print(dis.shape)
+    else:
+        dis = np.linalg.norm((O_br - O_cp)**2, axis = -1)
+    
     # take mean over the sample dimension (now the 2nd dim)
     mean_row_dis = np.nanmean(dis, axis = 2)
+    #print(mean_row_dis.shape)
     # overlap between every
     overlap = np.nansum(M[:, None] * M, axis = 2).astype('float64')
     zs = np.nonzero(overlap == 0)
     overlap[zs] = np.nan
+    overlap = overlap[:, :, None]
     
     # rows with 0 overlap will have nan in this matrix
     # entry cannot be own neighbor, so dist is infinite
-    mean_ovr = mean_row_dis / overlap
+    mean_ovr = (mean_row_dis / overlap).squeeze()
     np.fill_diagonal(mean_ovr, np.inf)
+    #print(mean_ovr.shape)
     return mean_ovr
 
 def estimate_row(Z, M, u, inds, dissims, eta, ax):
@@ -219,21 +234,25 @@ def estimate_row(Z, M, u, inds, dissims, eta, ax):
     ests : length T array with nn estimates in entries specifed by inds
     """
     Z_cp = Z.copy()
-    N, T = Z_cp.shape
+    N, T, d = Z_cp.shape
     Z_cp[M != 1] = np.nan
     if ax == 0:
         # nn_inds already accounts for no overlap entries
         nn_inds = dissims[u] <= eta
 
-        ests = np.full([T], np.nan)
+        ests = np.full([T, d], np.nan)
         ests[inds] = np.nanmean(Z[nn_inds, inds] * (M[nn_inds, inds] == 1), axis = 0)
         return ests
     else: 
-        ests = np.full([T], np.nan)
+        ests = np.full([T, d], np.nan)
         for i in inds:
           nn_inds = dissims[i] <= eta 
-          ests[i] = np.nanmean(Z_cp[u,nn_inds][M[u, nn_inds] == 1], axis = 0)
-        return ests
+          # len(nn_inds) x d
+          if np.sum(nn_inds & (M[u, :] == 1)) == 0:
+               ests[i] = np.full(d, -np.inf)
+          else:
+            ests[i] = np.nanmean(Z_cp[u,nn_inds][M[u, nn_inds] == 1], axis = 0)
+        return ests # T x d length vector
 
 def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
     """
@@ -253,9 +272,11 @@ def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
     np.random.seed(seed = 42)
     np.random.shuffle(obvs_inds_x)
     
+    #k = len(obvs_inds_x)
     # split coordinates into k-folds
     folds = np.array_split(obvs_inds_x, k, axis = 0)
     tot_error = 0
+    # LOOCV
     final_k = k
 
     all_nan = True
@@ -274,7 +295,7 @@ def cross_validate_row_snn(Z, M, i, k, eta, col_dists, negate_mask = False):
         Z_folds[i, folds_ind] = np.nan
         A_hat = estimate_row(Z_folds, est_mask, i, folds_ind, col_dists, eta, ax = 1)
         # compute error wrt given metric
-        err = mse(A_hat[folds_ind], ground_truth)
+        err = l2_loss(A_hat[folds_ind], ground_truth)
         if np.isnan(err):
             final_k -= 1
             #print("error nan")
