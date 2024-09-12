@@ -1,6 +1,4 @@
 import numpy as np
-
-import hyperopt as hp
 from hyperopt import Trials, fmin, tpe
 
 
@@ -25,32 +23,33 @@ class NNImputer(object):
 
     # should introduce validation for parameter ranges
     def set_etaspace(self, eta_space):
-      """
-      Parameters:
-      -----------
-      eta_space : a hyperopt parameter space object (hyperopt.uniform, hyperopt.loguniform, etc.)
-      """
-      self.eta_space = eta_space
+        """
+        Parameters:
+        -----------
+        eta_space : a hyperopt parameter space object
+                    (hyperopt.uniform, hyperopt.loguniform, etc.)
+        """
+        self.eta_space = eta_space
+
     # Helpers / data validation
     def _validate_inputs(self, Z: np.array, M: np.array):
         if len(Z.shape) != 4:
             raise ValueError(
-                "Input shape of data array should have 4 dimensions but {} were found".format(
-                    str(len(Z.shape))
-                )
+                f"Input shape of data array should have 4 dimensions "
+                f"but {str(len(Z.shape))} were found"
             )
         if len(M.shape) != 2:
             raise ValueError(
-                "Input shape of masking matrix should have 2 dimensions but {} were found".format(
-                    str(len(M.shape))
-                )
+                f"Input shape of masking matrix should have 2 dimensions "
+                f"but {str(len(M.shape))} were found"
             )
         N, T, n, d = Z.shape
         N_q, T_q = M.shape
         if N != N_q or T != T_q:
             raise ValueError(
-                "Masking matrix of dimension {} x {} was expected but matrix of dimension {} x {} was found instead"
-            ).format(str(N), str(T), str(N_q), str(T_q))
+                f"Masking matrix of dimension {str(N)} x {str(T)} was expected "
+                f"but matrix of dimension {str(N_q)} x {str(T_q)} was found instead"
+            )
         if np.nansum(M == 1) == 0:
             raise ValueError("All values are masked.")
 
@@ -58,16 +57,14 @@ class NNImputer(object):
     def estimate(self, inds=None, *args, **kwargs):
         # if inds is not None, only estimate inds indices in Z
         raise ValueError(
-            "{}.estimate is unimplemented and needs to be overridden in a subclass".format(
-                self.__name__
-            )
+            f"{self.__name__}.estimate is unimplemented and needs "
+            f"to be overridden in a subclass"
         )
 
     def distances(self, *args, **kwargs):
         raise ValueError(
-            "{}.distances is unimplemented and needs to be overridden in a subclass".format(
-                self.__name__
-            )
+            f"{self.__name__}.distances is unimplemented and needs "
+            f"to be overridden in a subclass"
         )
 
     def avg_error(self, ests, truth, *args, **kwargs):
@@ -75,9 +72,8 @@ class NNImputer(object):
         Average error over a 1d array-like of entries
         """
         raise ValueError(
-            "{}.avg_error is unimplemented and needs to be overridden in a subclass".format(
-                self.__name__
-            )
+            f"{self.__name__}.avg_error is unimplemented and needs "
+            f"to be overridden in a subclass"
         )
 
     def entry_error(self, est, truth, *args, **kwarags):
@@ -85,9 +81,8 @@ class NNImputer(object):
         Error for a single entry
         """
         raise ValueError(
-            "{}.entry_error is unimplemented and needs to be overridden in a subclass".format(
-                self.__name__
-            )
+            f"{self.__name__}.entry_error is unimplemented and needs "
+            f"to be overridden in a subclass"
         )
 
     # Common Code
@@ -108,12 +103,6 @@ class NNImputer(object):
         ----------
         avg_error : the average error of estimates over k validation folds
         """
-        # k = 1 not well defined
-        # if k == 1:
-        #     raise ValueError(
-        #         "1-Fold CV is not supported as some neighbors must be observed along the axis of interest."
-        #     )
-
         # currently don't support block inds
         if type(inds).__module__ == np.__name__:
             raise NotImplementedError("Block eta tuning coming soon!")
@@ -136,7 +125,6 @@ class NNImputer(object):
             k = self.k
         folds = np.array_split(obvs_inds, k, axis=0)
 
-        
         tot_error = 0
         final_k = k
         for j in range(k):
@@ -166,11 +154,13 @@ class NNImputer(object):
                 final_ests = [cv_Z_est[inds][i] for i in folds_inds]
 
             # compute avg error over estimates
-            err = self.avg_error(final_ests, ground_truth, inds = np.arange(0, len(folds_inds)))
+            err = self.avg_error(
+                final_ests, ground_truth, inds=np.arange(0, len(folds_inds))
+            )
 
             # TODO: think about this behavior - if fold error is nan, what to do?
             if not np.isnan(err):
-                notnan = True
+                # notnan = True
                 tot_error += err
             else:
                 final_k -= 1
@@ -190,7 +180,7 @@ class NNImputer(object):
         ret_trials=False,
         verbose=True,
         *args,
-        **kwargs
+        **kwargs,
     ):
         """
         Search for an optimal eta using cross validation on
@@ -201,8 +191,8 @@ class NNImputer(object):
         Z : array with shape (N, T, n, d)
         M : array with shape (N, T)
         inds : 1d array-like or scalar, the indices to perform cross-valdiation over.
-               inds indexes into axis specified by s. If 1d array, then len(inds) rows/cols
-               are selected for cross-validation.
+               inds indexes into axis specified by s.
+               If 1d array, then len(inds) rows/cols are selected for cross-validation.
         dists : distances between rows/cols.
 
         TBC ....
@@ -267,7 +257,8 @@ class NNImputer(object):
         self, Z: np.array, M: np.array, nn_type="ii", eta_axis=0, *args, **kwargs
     ):
         """
-        Estimate the masked (M_ij = 0) entries of Z using distributional nearest neighbors.
+        Estimate the masked (M_ij = 0) entries of Z using
+        distributional nearest neighbors.
 
         Parameters:
         ----------
@@ -300,7 +291,8 @@ class NNImputer(object):
         #  - distances should be sample split per row
         # tune eta using cross validation
         #   defaults: even-odd row eta tuning, item-item neighbors, LOOCV
-        #   custom: cv splitting, k-fold cv, col tuning, block tuning, user-user neighbors
+        #   custom: cv splitting, k-fold cv,
+        #           col tuning, block tuning, user-user neighbors
         # for each eta, estimate row using self.estimate.
 
         return Z_hat

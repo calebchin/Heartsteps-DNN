@@ -9,16 +9,18 @@
 #     kernel.                                       #
 #####################################################
 
-# imports
-import numpy as np
 import itertools
 import string
+
+# imports
+import numpy as np
 
 
 # MMD specific functions
 def sqmmd_est2(dat1, dat2, kernel, sigma=None):
     """
-    Computes U-statistics estimate of squared MMD_k, when number of samples from each distribution are different
+    Computes U-statistics estimate of squared MMD_k,
+    when number of samples from each distribution are different
 
     Input
         dat 1 : (m * d) data matrix coming from first d dim distribution
@@ -37,7 +39,7 @@ def sqmmd_est2(dat1, dat2, kernel, sigma=None):
         print("Data dimension do not match!")
         return
 
-    d = dat1.shape[1]
+    # d = dat1.shape[1]
 
     XX = np.matmul(dat1, np.transpose(dat1))  # m by m matrix with x_i^Tx_j
     YY = np.matmul(dat2, np.transpose(dat2))  # n by n matrix with y_i^Ty_j
@@ -75,7 +77,8 @@ def sqmmd_est2(dat1, dat2, kernel, sigma=None):
 
 def sqmmd_est2_col(dat1, dat2, kernel, sigma=None):
     """
-    Computes U-statistics estimate of squared MMD_k, when number of samples from each distribution are different
+    Computes U-statistics estimate of squared MMD_k,
+    when number of samples from each distribution are different
 
     Input
         dat 1 : N x m x d data matrix coming from first d dim distribution
@@ -174,7 +177,8 @@ def sqmmd_cols(Z, M, kernel):
     N, T, n, d = Z.shape
 
     # want a T x T matrix, where each entry is the MMD^2 difference between the columns
-    # to do this, need a T x T x N matrix where each entry is a vector of entry differences for each pair of columns
+    # to do this, need a T x T x N matrix where each entry is a
+    # vector of entry differences for each pair of columns
     # to do this, need to broadcast the matmul
     interm = Z.swapaxes(0, 1)[:, None, :, :] @ Z.swapaxes(0, 1).swapaxes(
         2, 3
@@ -316,16 +320,12 @@ def get_col_differences(Z, M, metric, kernel, sigma=None):
         # take mean across users
         diffs = np.nanmean(diffs, axis=-1)
     elif metric == "mmd":
-        # # TODO: see if this can be vectorized
+        # TODO: see if this can be vectorized
         diffs = np.full([T, T], 0.0)
         for i in range(T - 1):
             for j in range(i + 1, T):
                 col_diffs = sqmmd_est2_col(Z_cp[:, i], Z_cp[:, j], kernel, sigma)
                 diffs[i, j] = col_diffs
-        # diffs =  (1 / (n * (n - 1)) * (np.nanmean(sum_h, axis = 2))) # average over users, unobserved entries are already nan
-        # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
-        # print(np.sum(diffs == 0))
-        # print(np.sum(diffs > 0))
         diffs = diffs + diffs.T
         diffs = np.clip(diffs, a_min=0, a_max=None)
     np.fill_diagonal(diffs, np.inf)
@@ -334,8 +334,8 @@ def get_col_differences(Z, M, metric, kernel, sigma=None):
 
 def get_col_differences_all_kernels(Z, M, metric, kernel):
     """
-    Z : a N x T x n x d tensor. If metric = "wasserstein2", then d = 1
-    M : a N x T masking matrix
+    Z : an N x T x n x d tensor. If metric = "wasserstein2", then d = 1
+    M : an N x T masking matrix
     metric : distance metric between columns, either "wasserstein2" or "mmd"
     kern : kernel function to use if metric = "mmd", None by default
 
@@ -362,24 +362,24 @@ def get_col_differences_all_kernels(Z, M, metric, kernel):
         np.fill_diagonal(diffs, np.inf)
         return diffs
     elif metric == "mmd":
-        # TODO: see if this can be vectorized
-        if kernel == "exponential":
-            kern = exponential_kernel
-        elif kernel == "square":
-            kern = square_kernel
-        elif kernel == "linear":
-            kern = linear_kernel
-        else:
-            # default is linear kernel for now
-            kern = linear_kernel
+        # # TODO: see if this can be vectorized
+        # if kernel == "exponential":
+        #     kern = exponential_kernel
+        # elif kernel == "square":
+        #     kern = square_kernel
+        # elif kernel == "linear":
+        #     kern = linear_kernel
+        # else:
+        #     # default is linear kernel for now
+        #     kern = linear_kernel
         sum_exp = np.zeros([T, T, N])
         sum_square = np.zeros([T, T, N])
-        for l, l_p in itertools.combinations(range(n), r=2):
-            if l != l_p:
-                x = Z_cp[:, :, l]  # this is N x T x d
-                x_p = Z_cp[:, :, l_p]
-                y = Z_cp[:, :, l]  # this is N x T x d
-                y_p = Z_cp[:, :, l_p]
+        for n1, n2 in itertools.combinations(range(n), r=2):
+            if n1 != n2:
+                x = Z_cp[:, :, n1]  # this is N x T x d
+                x_p = Z_cp[:, :, n2]
+                y = Z_cp[:, :, n1]  # this is N x T x d
+                y_p = Z_cp[:, :, n2]
                 sum_exp += exponential_kernel(x, x_p) + exponential_kernel(y, y_p)
                 -exponential_kernel(x, y_p) - exponential_kernel(
                     x_p, y
@@ -388,7 +388,8 @@ def get_col_differences_all_kernels(Z, M, metric, kernel):
                 -square_kernel(x, y_p) - square_kernel(x_p, y)
         exp_diffs = 1 / (n * (n - 1)) * (np.nanmean(sum_exp, axis=2))
         sq_diffs = 1 / (n * (n - 1)) * (np.nanmean(sum_square, axis=2))
-        # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
+        # since MMD_hat is estimate, could be negative.
+        # if negative, assume that the MMD distance is 0
         exp_diffs = np.clip(exp_diffs, a_min=0, a_max=None)
         sq_diffs = np.clip(sq_diffs, a_min=0, a_max=None)
         np.fill_diagonal(exp_diffs, np.inf)
@@ -504,13 +505,17 @@ def tune_and_estimate(
     axis : the axis over which to compare. If "row", then user-user nearest
            neighbors is computed (find similar users), if "col", then time-time
            nearest neighbors is used (find similar cols/time).
-    metric : the DNN method to use. "wasserstein2" by default. If "mmd", then a kernel type must be specified.
-    k : the number of folds to be used in k-fold cross validation when searching for eta.
+    metric : the DNN method to use. "wasserstein2" by default.
+             If "mmd", then a kernel type must be specified.
+    k : the number of folds to be used in k-fold
+        cross validation when searching for eta.
         By default, None. When None, LOOCV is used.
-    eta_spec : if "axis", then an eta is tuned for every `axis`. if "all", then eta is tuned for every entry (not recommended).
-    kernel : the kernel type to use. Currently supported: "square" and "exponential", where "exponential"
-             refers to the Gaussian kernel.
-    ret_nn : if True, returns estimates, number of neighbors, list of neighbors. If False, just returns estimates.
+    eta_spec : if "axis", then an eta is tuned for every `axis`. if "all",
+               then eta is tuned for every entry (not recommended).
+    kernel : the kernel type to use. Currently supported: "square" and
+             "exponential", where "exponential" refers to the Gaussian kernel.
+    ret_nn : if True, returns estimates, number of neighbors, list of neighbors.
+             If False, just returns estimates.
              False by default.
     """
     # need to add assertions for compatability and data types
@@ -523,4 +528,5 @@ def tune_and_estimate(
     assert (metric == "wasserstein2") | (metric == "mmd")
 
 
-# should allow use of internal funcs for custom tuning strats - need to make docs more accessible.
+# should allow use of internal funcs for custom tuning
+# strats - need to make docs more accessible.

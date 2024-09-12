@@ -1,6 +1,7 @@
-from nnimputer import NNImputer
 import numpy as np
-from hyperopt import fmin, Trials, tpe
+from hyperopt import tpe
+
+from nnimputer import NNImputer
 
 
 class KernelNN(NNImputer):
@@ -40,7 +41,8 @@ class KernelNN(NNImputer):
 
     def _sqmmd_est2(self, dat1, dat2):
         """
-        Computes U-statistics estimate of squared MMD_k, when number of samples from each distribution are different
+        Computes U-statistics estimate of squared MMD_k, when number of
+        samples from each distribution are different
 
 
         Parameters:
@@ -110,9 +112,8 @@ class KernelNN(NNImputer):
             val = 0
         return val
 
-    def estimate(self, Z, M, eta, inds, dists, ret_nn = False, *args, **kwargs):
-        """
-        """
+    def estimate(self, Z, M, eta, inds, dists, ret_nn=False, *args, **kwargs):
+        """ """
         N, T, n, d = Z.shape
         Z_cp = Z.copy()
         Z_cp[M == 0] = np.nan
@@ -179,7 +180,8 @@ class KernelNN(NNImputer):
                 for j in range(i + 1, N):
                     row_diffs = self._sqmmd_est2(Z_cp[i, :], Z_cp[j, :])
                     diffs[i, j] = row_diffs
-        # since MMD_hat is estimate, could be negative. if negative, assume that the MMD distance is 0
+        # since MMD_hat is estimate, could be negative.
+        # if negative, assume that the MMD distance is 0
         diffs = diffs + diffs.T
         diffs = np.clip(diffs, a_min=0, a_max=None)
         np.fill_diagonal(diffs, np.inf)
@@ -205,8 +207,8 @@ class KernelNN(NNImputer):
         num_val = len(inds)
         for val in inds:
             est_val = ests[val]
-            if (np.any(np.isinf(est_val * - 1))):
-                #print("No neighbors")
+            if np.any(np.isinf(est_val * -1)):
+                # print("No neighbors")
                 err_onecell = np.nan
             else:
                 err_onecell = self._sqmmd_est2(est_val, truth[val])
